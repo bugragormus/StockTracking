@@ -3,13 +3,19 @@ from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from telegram import Update
+import chromedriver_autoinstaller
 from telegram.ext import Application, CommandHandler, ConversationHandler, CallbackContext, MessageHandler, filters
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 import datetime
 
+# ChromeDriver'ı otomatik olarak yükle
+chromedriver_autoinstaller.install()
+
+"""
 # ChromeDriver yolunu buraya giriyoruz
 CHROMEDRIVER_PATH = "/Users/bugragrms/Desktop/chromedriver-mac-arm64/chromedriver"
+"""
 
 # Global değişkenler
 user_data = {}
@@ -30,8 +36,7 @@ def check_stock(url: str, size: str) -> str:
     )
 
     # ChromeDriver'ı başlat
-    service = Service(CHROMEDRIVER_PATH)
-    driver = webdriver.Chrome(service=service, options=options)
+    driver = webdriver.Chrome(options=options)
 
     try:
         driver.get(url)
