@@ -64,12 +64,14 @@ def check_stock(url: str, size: str) -> str:
         driver.quit()
 
 
+# Veritabanına ürün eklerken her kullanıcıya özgü işlem yapmalıyız
 def add_product_to_user(chat_id, url, size, status):
     """Veritabanına ürün ekler."""
-    user_ref = db.collection("users").document(str(chat_id))
-    products_ref = user_ref.collection("products")
+    user_ref = db.collection("users").document(str(chat_id))  # Kullanıcıya özel referans
+    products_ref = user_ref.collection("products")  # Her kullanıcıya özgü ürün koleksiyonu
 
-    product_id = ''.join(random.choices(string.ascii_lowercase + string.digits, k=10))  # Ürün için benzersiz id oluştur
+    # Benzersiz ürün ID'si oluştur
+    product_id = ''.join(random.choices(string.ascii_lowercase + string.digits, k=10))
 
     products_ref.document(product_id).set({
         "url": url,
@@ -77,6 +79,29 @@ def add_product_to_user(chat_id, url, size, status):
         "status": status
     })
     return product_id  # Ürün ID'sini döndür
+
+# Kullanıcının ürünlerini listeleme
+async def list_products(update: Update, context: CallbackContext) -> int:
+    """Kullanıcıya mevcut ürünleri listeleyin."""
+    chat_id = update.message.chat_id
+    user_ref = db.collection("users").document(str(chat_id))  # Kullanıcıya özel referans
+    products_ref = user_ref.collection("products")  # Kullanıcıya özgü ürün koleksiyonu
+
+    products = products_ref.stream()
+    product_list = []
+    for product in products:
+        product_data = product.to_dict()
+        product_list.append(
+            f"{product.id} - {product_data['url']} (Beden: {product_data['size']}, Durum: {product_data['status']})")
+
+    if product_list:
+        await update.message.reply_text("Mevcut ürünler:\n" + "\n".join(product_list))
+        await update.message.reply_text("Silmek istediğiniz ürünün ID'sini gönderin.")
+        return 3  # Ürün silme işlemini başlatmak için
+    else:
+        await update.message.reply_text("Henüz ürün eklemediniz. Lütfen bir ürün ekleyin.")
+        return ConversationHandler.END
+
 
 
 # Kullanıcının ürünlerini listele
@@ -165,8 +190,8 @@ async def get_size(update: Update, context: CallbackContext) -> int:
 async def scheduled_stock_check(context: CallbackContext) -> None:
     """Düzenli aralıklarla stok kontrolü yapar ve sonucu kullanıcıya gönderir."""
     chat_id = context.job.chat_id
-    user_ref = db.collection("users").document(str(chat_id))
-    products_ref = user_ref.collection("products")
+    user_ref = db.collection("users").document(str(chat_id))  # Kullanıcıya özgü referans
+    products_ref = user_ref.collection("products")  # Kullanıcıya özgü ürün koleksiyonu
 
     try:
         for product_doc in products_ref.stream():
@@ -192,6 +217,7 @@ async def scheduled_stock_check(context: CallbackContext) -> None:
             chat_id=chat_id,
             text=f"Stok kontrolü sırasında bir hata oluştu: {str(e)}",
         )
+
 
 async def notify_hourly_check(context: CallbackContext) -> None:
     """Saat başı çalıştığını bildiren mesaj gönderir."""
