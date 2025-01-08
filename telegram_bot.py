@@ -8,6 +8,19 @@ import firebase_admin
 from firebase_admin import credentials, firestore
 import random
 import string
+from dotenv import load_dotenv
+import os
+from telegram.ext import Application
+
+# .env dosyasını yükleyin
+load_dotenv()
+
+# Bot token'ını al
+bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
+
+if bot_token is None:
+    raise ValueError("Bot token environment variable is not set")
+
 
 # Firebase bağlantısı
 cred = credentials.Certificate("/Users/bugragrms/Desktop/stockChecker/serviceAccountKey.json")
@@ -237,7 +250,7 @@ async def cancel(update: Update, context: CallbackContext) -> int:
 
 def main():
     """Telegram botun ana döngüsü."""
-    application = Application.builder().token("7766024537:AAG5JGEZA_swpWJjKWyZWhdQnaJt4Wdj1tU").build()
+    application = Application.builder().token(bot_token).build()
 
     # Konuşma işleyicisi
     conv_handler = ConversationHandler(
