@@ -1,13 +1,9 @@
+import chromedriver_autoinstaller
 from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from telegram import Update
-import chromedriver_autoinstaller
 from telegram.ext import Application, CommandHandler, ConversationHandler, CallbackContext, MessageHandler, filters
-from apscheduler.schedulers.background import BackgroundScheduler
-from apscheduler.triggers.interval import IntervalTrigger
-import datetime
 
 # ChromeDriver'ı otomatik olarak yükle
 chromedriver_autoinstaller.install()
