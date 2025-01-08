@@ -4,19 +4,24 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ConversationHandler, CallbackContext, MessageHandler, filters
+import firebase_admin
+from firebase_admin import credentials, firestore
+import random
+import string
+
+# Firebase bağlantısı
+cred = credentials.Certificate("/Users/bugragrms/Desktop/stockChecker/serviceAccountKey.json")
+firebase_admin.initialize_app(cred)
+db = firestore.client()
 
 # ChromeDriver'ı otomatik olarak yükle
 chromedriver_autoinstaller.install()
-
-"""
-# ChromeDriver yolunu buraya giriyoruz
-CHROMEDRIVER_PATH = "/Users/bugragrms/Desktop/chromedriver-mac-arm64/chromedriver"
-"""
 
 # Global değişkenler
 user_data = {}
 
 
+# Stok kontrol fonksiyonu
 def check_stock(url: str, size: str) -> str:
     """Belirtilen URL ve beden için stok durumunu kontrol eder."""
     options = Options()
@@ -40,31 +45,77 @@ def check_stock(url: str, size: str) -> str:
         # Bütün beden butonlarını kontrol et
         size_buttons = driver.find_elements(By.CLASS_NAME, 'size-selector-sizes-size__button')
 
-        # Bedenleri ve uyarıları ekrana yazdırarak hangi bedenlerin bulunduğunu görelim
         for size_button in size_buttons:
             size_info = size_button.find_element(By.CLASS_NAME, 'size-selector-sizes-size__info')
             size_label = size_info.find_element(By.CLASS_NAME, 'size-selector-sizes-size__label').text.strip()
             qa_action = size_button.get_attribute('data-qa-action')  # 'data-qa-action' attribute'unu al
 
-            # Kullanıcının istediği beden ile karşılaştır
             if size_label == size:
-                # Eğer "size-low-on-stock" varsa
                 if qa_action == "size-low-on-stock":
                     return "Az kalmış, acele et!"
-
-                # Eğer "size-out-of-stock" varsa
                 if qa_action == "size-out-of-stock":
                     return None  # Stokta yok, mesaj atma
-
-                # Eğer "size-in-stock" varsa, stokta var
                 if qa_action == "size-in-stock":
                     return "Ürün mevcut"
 
-        # Eğer buton bulunamazsa, bedeni bulamıyoruz demektir.
         return "Ürün Bulunamadı"
 
     finally:
         driver.quit()
+
+
+def add_product_to_user(chat_id, url, size, status):
+    """Veritabanına ürün ekler."""
+    user_ref = db.collection("users").document(str(chat_id))
+    products_ref = user_ref.collection("products")
+
+    product_id = ''.join(random.choices(string.ascii_lowercase + string.digits, k=10))  # Ürün için benzersiz id oluştur
+
+    products_ref.document(product_id).set({
+        "url": url,
+        "size": size,
+        "status": status
+    })
+    return product_id  # Ürün ID'sini döndür
+
+
+# Kullanıcının ürünlerini listele
+async def list_products(update: Update, context: CallbackContext) -> int:
+    """Kullanıcıya mevcut ürünleri listeleyin."""
+    chat_id = update.message.chat_id
+    user_ref = db.collection("users").document(str(chat_id))
+    products_ref = user_ref.collection("products")
+
+    products = products_ref.stream()
+    product_list = []
+    for product in products:
+        product_data = product.to_dict()
+        product_list.append(
+            f"{product.id} - {product_data['url']} (Beden: {product_data['size']}, Durum: {product_data['status']})")
+
+    if product_list:
+        await update.message.reply_text("Mevcut ürünler:\n" + "\n".join(product_list))
+        await update.message.reply_text("Silmek istediğiniz ürünün ID'sini gönderin.")
+        return 3  # Ürün silme işlemini başlatmak için
+    else:
+        await update.message.reply_text("Henüz ürün eklemediniz. Lütfen bir ürün ekleyin.")
+        return ConversationHandler.END
+
+
+# Ürün silme fonksiyonu
+async def delete_product(update: Update, context: CallbackContext) -> int:
+    """Kullanıcıdan ürün silme işlemi alınır."""
+    product_id = update.message.text.strip()  # Silinmek istenen ürün ID'si
+    chat_id = update.message.chat_id
+    user_ref = db.collection("users").document(str(chat_id))
+    products_ref = user_ref.collection("products")
+
+    # Firebase'den ürünü sil
+    product_ref = products_ref.document(product_id)
+    product_ref.delete()
+
+    await update.message.reply_text(f"Ürün {product_id} silindi!")
+    return ConversationHandler.END
 
 
 async def start(update: Update, context: CallbackContext) -> int:
@@ -87,7 +138,11 @@ async def get_size(update: Update, context: CallbackContext) -> int:
         "Bilgiler alındı. Stok durumu düzenli olarak kontrol edilecek. Güncellemeler için bekleyin!"
     )
 
-    # APScheduler ile stok kontrolü başlatılıyor
+    # Firebase'e kaydet
+    stock_status = check_stock(user_data["url"], user_data["size"])
+    product_id = add_product_to_user(update.message.chat_id, user_data["url"], user_data["size"], stock_status)
+
+    # Saat başı çalıştığını bildiren mesajı gönder
     context.job_queue.run_repeating(
         callback=scheduled_stock_check,
         interval=10,  # 10 saniye
@@ -96,7 +151,7 @@ async def get_size(update: Update, context: CallbackContext) -> int:
         name=str(update.message.chat_id),
     )
 
-    # Saat başı çalıştığını bildiren mesajı gönder
+    # Saat başı kontrolü bildir
     context.job_queue.run_repeating(
         callback=notify_hourly_check,
         interval=3600,  # 1 saat
@@ -107,27 +162,36 @@ async def get_size(update: Update, context: CallbackContext) -> int:
 
     return ConversationHandler.END
 
-
 async def scheduled_stock_check(context: CallbackContext) -> None:
     """Düzenli aralıklarla stok kontrolü yapar ve sonucu kullanıcıya gönderir."""
-    url = user_data.get("url")
-    size = user_data.get("size")
-    if not url or not size:
-        return
+    chat_id = context.job.chat_id
+    user_ref = db.collection("users").document(str(chat_id))
+    products_ref = user_ref.collection("products")
 
     try:
-        stock_status = check_stock(url, size)
-        if stock_status:  # Eğer ürün stokta varsa (None değilse)
-            await context.bot.send_message(
-                chat_id=context.job.chat_id,
-                text=f"Stok Durumu: {stock_status}\nLink: {url}",
-            )
+        for product_doc in products_ref.stream():
+            product = product_doc.to_dict()
+            url = product.get("url")
+            size = product.get("size")
+            stock_status = check_stock(url, size)
+
+            # Stok durumu güncelleme ve bildirim gönderme
+            if stock_status:
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=f"Stok Durumu: {stock_status}\nLink: {url}",
+                )
+                # Stok durumunu Firebase'de güncelle
+                products_ref.document(product_doc.id).update({"status": stock_status})
+            elif stock_status is None:
+                # Ürün stokta yoksa sadece durumu güncelle
+                products_ref.document(product_doc.id).update({"status": "Ürün tükenmiş"})
+
     except Exception as e:
         await context.bot.send_message(
-            chat_id=context.job.chat_id,
+            chat_id=chat_id,
             text=f"Stok kontrolü sırasında bir hata oluştu: {str(e)}",
         )
-
 
 async def notify_hourly_check(context: CallbackContext) -> None:
     """Saat başı çalıştığını bildiren mesaj gönderir."""
@@ -138,7 +202,6 @@ async def notify_hourly_check(context: CallbackContext) -> None:
         )
     except Exception as e:
         print(f"Hata oluştu: {str(e)}")
-
 
 async def cancel(update: Update, context: CallbackContext) -> int:
     """Konuşmayı iptal eder."""
@@ -152,10 +215,11 @@ def main():
 
     # Konuşma işleyicisi
     conv_handler = ConversationHandler(
-        entry_points=[CommandHandler("start", start)],
+        entry_points=[CommandHandler("start", start), CommandHandler("list", list_products)],
         states={
             1: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_url)],
             2: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_size)],
+            3: [MessageHandler(filters.TEXT & ~filters.COMMAND, delete_product)],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
     )
